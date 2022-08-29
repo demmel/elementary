@@ -1,8 +1,12 @@
+use std::os::windows::thread;
+
 use bevy::{
     math::Vec3Swizzles,
     prelude::{shape::UVSphere, *},
+    render::render_resource::Face,
     time::FixedTimestep,
 };
+use bevy_editor_pls::egui::color_picker::Alpha;
 
 pub fn choose_colors(n: usize) -> Vec<Color> {
     let mut points = get_initial_points(n);
@@ -34,10 +38,6 @@ fn get_initial_points(n: usize) -> Vec<Vec3> {
 }
 
 fn tick_points(points: &mut [Vec3]) {}
-
-fn is_point_in_bounds(p: Vec3) -> bool {
-    !(p.x > 1.0 || p.y > 1.0 || p.z > 1.0 || p.dot(luma()) < 0.1)
-}
 
 pub struct ChooseColorVisualization;
 
@@ -83,6 +83,7 @@ fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
+    mut asset_materials: ResMut<Assets<StandardMaterial>>,
     mut materials: Res<Materials>,
 ) {
     let sphere_mesh = meshes.add(
@@ -94,12 +95,13 @@ fn setup_world(
     );
 
     let points = get_initial_points(1500);
+    let bounds = bounds();
 
     for p in points {
         commands
             .spawn_bundle(PbrBundle {
                 mesh: sphere_mesh.clone(),
-                material: if !is_point_in_bounds(p) {
+                material: if !bounds.is_in_bounds(p) {
                     materials.red.clone()
                 } else {
                     materials.green.clone()
@@ -109,19 +111,34 @@ fn setup_world(
             })
             .insert(Point);
     }
+
+    let plane_material = asset_materials.add(StandardMaterial {
+        base_color: Color::rgba(1.0, 1.0, 1.0, 0.1).clone(),
+        double_sided: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+
+    let plane_mesh = meshes.add(shape::Plane { size: 2. }.into());
+
+    for bound in &bounds.0 {
+        let mut transform = Transform::from_rotation(Quat::from_rotation_arc(Vec3::Y, bound.0));
+        transform.translation += bound.1 * transform.local_y();
+        commands.spawn_bundle(PbrBundle {
+            mesh: plane_mesh.clone(),
+            material: plane_material.clone(),
+            transform,
+            ..default()
+        });
+    }
 }
 
 fn adjust_points(
     materials: Res<Materials>,
     mut points: Query<(Entity, &mut Transform, &mut Handle<StandardMaterial>), With<Point>>,
 ) {
-    let planes = [
-        (-Vec3::X, -1.0),
-        (-Vec3::Y, -1.0),
-        (-Vec3::Z, -1.0),
-        (luma().normalize(), 0.1),
-    ];
-
+    let bounds = bounds();
     let n_points = points.iter().count();
     let forces: Vec<_> = points
         .iter()
@@ -131,18 +148,19 @@ fn adjust_points(
                 if (e1 == e2) {
                     continue;
                 }
-                force += ((t1.translation - t2.translation)
-                    / (t1.translation.distance_squared(t2.translation) + f32::EPSILON));
+
+                let d = t1.translation.distance(t2.translation);
+                force += (t1.translation - t2.translation) / (d.powi(2) + f32::EPSILON);
             }
 
-            for (normal, offset) in planes {
-                let v = t1.translation.dot(normal) - offset;
-                force += (n_points - 1) as f32
+            for bound in &bounds.0 {
+                let v = bound.distance(t1.translation);
+                force += ((n_points - 1) / bounds.0.len()) as f32
                     * if v > 0.0 {
-                        normal / (v.powi(2) + f32::EPSILON)
+                        bound.0 / (v.powi(2) + f32::EPSILON)
                     } else {
-                        normal / f32::EPSILON
-                    }
+                        bound.0 / f32::EPSILON
+                    };
             }
 
             force.normalize()
@@ -150,13 +168,45 @@ fn adjust_points(
         .collect();
 
     for ((_, mut t, mut m), force) in points.iter_mut().zip(forces.into_iter()) {
-        t.translation += 1e-3 * force;
-        *m = if !is_point_in_bounds(t.translation) {
+        t.translation += 1e-4 * force;
+        *m = if !bounds.is_in_bounds(t.translation) {
             materials.red.clone()
         } else {
             materials.green.clone()
         }
     }
+}
+
+struct Bound(Vec3, f32);
+
+impl Bound {
+    fn distance(&self, v: Vec3) -> f32 {
+        v.dot(self.0) - self.1
+    }
+
+    fn is_in_bound(&self, v: Vec3) -> bool {
+        self.distance(v) > 0.0
+    }
+}
+
+struct Bounds(Vec<Bound>);
+
+impl Bounds {
+    fn is_in_bounds(&self, v: Vec3) -> bool {
+        self.0.iter().all(|b| b.is_in_bound(v))
+    }
+}
+
+fn bounds() -> Bounds {
+    Bounds(vec![
+        Bound(-Vec3::X, -1.0),
+        Bound(-Vec3::Y, -1.0),
+        Bound(-Vec3::Z, -1.0),
+        Bound(Vec3::X, 0.0),
+        Bound(Vec3::Y, 0.0),
+        Bound(Vec3::Z, 0.0),
+        Bound(luma().normalize(), 0.1),
+    ])
 }
 
 const fn luma() -> Vec3 {
