@@ -155,12 +155,11 @@ fn adjust_points(
 
             for bound in &bounds.0 {
                 let v = bound.distance(t1.translation);
-                force += ((n_points - 1) / bounds.0.len()) as f32
-                    * if v > 0.0 {
-                        bound.0 / (v.powi(2) + f32::EPSILON)
-                    } else {
-                        bound.0 / f32::EPSILON
-                    };
+                force += if v > 0.0 {
+                    bound.0 / (v.powi(2) + f32::EPSILON)
+                } else {
+                    (n_points - 1) as f32 * bound.0 / f32::EPSILON
+                };
             }
 
             force.normalize()
@@ -168,7 +167,7 @@ fn adjust_points(
         .collect();
 
     for ((_, mut t, mut m), force) in points.iter_mut().zip(forces.into_iter()) {
-        t.translation += 1e-4 * force;
+        t.translation += 1e-3 * force;
         *m = if !bounds.is_in_bounds(t.translation) {
             materials.red.clone()
         } else {
