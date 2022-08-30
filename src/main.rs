@@ -8,7 +8,7 @@ use bevy::{
     window::{PresentMode, WindowMode},
 };
 use bevy_flycam::PlayerPlugin;
-use choose_color::{choose_colors, ChooseColorVisualization};
+use choose_color::choose_colors;
 
 #[cfg(feature = "editor")]
 use ::{
@@ -27,8 +27,7 @@ fn main() {
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
     .add_plugins(DefaultPlugins)
     .add_plugin(PlayerPlugin)
-    .add_plugin(ChooseColorVisualization);
-    // .add_startup_system(setup_world);
+    .add_startup_system(setup_world);
 
     #[cfg(feature = "editor")]
     app.add_plugin(EditorPlugin)
