@@ -4,17 +4,24 @@ use std::f32::consts::PI;
 
 use bevy::{
     prelude::{shape::UVSphere, *},
+    time::FixedTimestep,
     utils::HashMap,
     window::{PresentMode, WindowMode},
 };
 use bevy_flycam::PlayerPlugin;
 use choose_color::choose_colors;
+use rand::{thread_rng, Rng};
 
 #[cfg(feature = "editor")]
 use ::{
     bevy::diagnostic::{EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin},
     bevy_editor_pls::prelude::*,
 };
+
+const NUM_KINDS: usize = 5;
+const NUM_PARTICLES: usize = 1400;
+const TICK_TIME: f32 = 1.0 / 60.0;
+const PARTICLE_SIZE: f32 = 0.01;
 
 fn main() {
     let mut app = App::new();
@@ -27,7 +34,14 @@ fn main() {
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
     .add_plugins(DefaultPlugins)
     .add_plugin(PlayerPlugin)
-    .add_startup_system(setup_world);
+    .insert_resource(ParticleSystem::rand(&mut thread_rng(), NUM_KINDS))
+    .add_startup_system(setup_world)
+    .add_system_set(
+        SystemSet::new()
+            .with_run_criteria(FixedTimestep::step(TICK_TIME as f64))
+            .with_system(update_velocities)
+            .with_system(update_physics.after(update_velocities)),
+    );
 
     #[cfg(feature = "editor")]
     app.add_plugin(EditorPlugin)
@@ -40,10 +54,12 @@ fn main() {
 fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut ambient_light: ResMut<AmbientLight>,
+    particle_system: Res<ParticleSystem>,
 ) {
+    println!("{particle_system:?}");
+
     *ambient_light = AmbientLight {
         color: Color::WHITE,
         brightness: 0.0,
@@ -51,41 +67,105 @@ fn setup_world(
 
     let sphere_mesh = meshes.add(
         UVSphere {
-            radius: 0.01,
+            radius: PARTICLE_SIZE,
             ..default()
         }
         .into(),
     );
 
-    let num_particles = 1000;
-
-    let colors = choose_colors(num_particles);
-
-    for (i, color) in colors.iter().enumerate() {
-        let r = 5.0;
-        let theta = 2.0 * PI * (i as f32 / num_particles as f32);
-        commands.spawn_bundle(PbrBundle {
-            mesh: sphere_mesh.clone(),
-            material: materials.add(StandardMaterial {
+    let kinds: Vec<_> = particle_system.kinds().collect();
+    let color_materials: Vec<_> = choose_colors(kinds.len())
+        .into_iter()
+        .map(|color| {
+            materials.add(StandardMaterial {
                 emissive: color.clone(),
                 ..default()
-            }),
-            transform: Transform::from_translation(Vec3::new(
-                r * theta.cos(),
-                0.0,
-                r * theta.sin(),
-            )),
-            ..default()
-        });
+            })
+        })
+        .collect();
+
+    let mut rng = thread_rng();
+    for _ in 0..NUM_PARTICLES {
+        let kind_i = rng.gen_range(0..kinds.len());
+        let kind = kinds[kind_i];
+
+        commands
+            .spawn_bundle(PbrBundle {
+                mesh: sphere_mesh.clone(),
+                material: color_materials[kind_i].clone(),
+                transform: Transform::from_translation(Vec3::new(
+                    20.0 * (rng.gen::<f32>() - 0.5),
+                    20.0 * (rng.gen::<f32>() - 0.5),
+                    20.0 * (rng.gen::<f32>() - 0.5),
+                )),
+                ..default()
+            })
+            .insert(kind)
+            .insert(Velocity(Vec3::ZERO));
+    }
+}
+
+fn update_velocities(
+    particle_system: Res<ParticleSystem>,
+    mut particles_with_velocity: Query<(Entity, &ParticleKindHandle, &Transform, &mut Velocity)>,
+    particles: Query<(Entity, &ParticleKindHandle, &Transform)>,
+) {
+    for (e1, k1, t1, mut v1) in particles_with_velocity.iter_mut() {
+        let mut force = Vec3::ZERO;
+        for (e2, k2, t2) in particles.iter() {
+            if e1 == e2 {
+                continue;
+            }
+            let d = (t2.translation - t1.translation);
+            force += particle_system.rule(*k1, *k2) * d.normalize_or_zero()
+                / (d.length_squared() + f32::EPSILON);
+        }
+        *v1 = Velocity(v1.0 + TICK_TIME * force);
+    }
+}
+
+fn update_physics(mut particles: Query<(&Velocity, &mut Transform)>) {
+    for (v, mut t) in particles.iter_mut() {
+        t.translation += v.0;
     }
 }
 
 #[derive(Component)]
+struct Velocity(Vec3);
+
+#[derive(Clone, Copy, Component)]
 struct ParticleKindHandle(usize);
 
-struct ParticleRules(HashMap<ParticleKindHandle, HashMap<ParticleKindHandle, f32>>);
+#[derive(Debug)]
+struct ParticleSystem {
+    num_kinds: usize,
+    rules: Vec<f32>,
+}
 
-#[derive(Bundle)]
-struct Particle {
-    kind: ParticleKindHandle,
+impl ParticleSystem {
+    pub fn rand<R: Rng>(rng: &mut R, num_kinds: usize) -> Self {
+        Self {
+            num_kinds,
+            rules: (0..(num_kinds * num_kinds))
+                .map(|_| 2.0 * (rng.gen::<f32>() - 0.5))
+                .collect(),
+        }
+    }
+
+    pub fn kinds(&self) -> impl Iterator<Item = ParticleKindHandle> {
+        (0..self.num_kinds).map(|pk| ParticleKindHandle(pk))
+    }
+
+    pub fn rule(&self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> f32 {
+        self.rules[self.index(pk1, pk2)]
+    }
+
+    pub fn rule_mut(&mut self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> &mut f32 {
+        let index = self.index(pk1, pk2);
+        &mut self.rules[index]
+    }
+
+    fn index(&self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> usize {
+        pk1.0 * self.num_kinds + pk2.0
+    }
 }
