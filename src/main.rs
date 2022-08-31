@@ -9,6 +9,7 @@ use bevy::{
     window::{PresentMode, WindowMode},
 };
 use bevy_flycam::PlayerPlugin;
+use bevy_rapier3d::prelude::*;
 use choose_color::choose_colors;
 use rand::{thread_rng, Rng};
 
@@ -18,10 +19,10 @@ use ::{
     bevy_editor_pls::prelude::*,
 };
 
-const NUM_KINDS: usize = 5;
-const NUM_PARTICLES: usize = 1400;
-const TICK_TIME: f32 = 1.0 / 60.0;
+const NUM_KINDS: usize = 4;
+const NUM_PARTICLES: usize = 3000;
 const PARTICLE_SIZE: f32 = 0.01;
+const PARTICLE_FORCE_MAX: f32 = 0.001;
 
 fn main() {
     let mut app = App::new();
@@ -33,15 +34,20 @@ fn main() {
     })
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
     .add_plugins(DefaultPlugins)
+    .add_plugin(RapierPhysicsPlugin::<NoUserData>::default())
+    .insert_resource(RapierConfiguration {
+        gravity: Vect::ZERO,
+        timestep_mode: TimestepMode::Variable {
+            max_dt: 1.0 / 240.0,
+            time_scale: 0.01,
+            substeps: 1,
+        },
+        ..default()
+    })
     .add_plugin(PlayerPlugin)
     .insert_resource(ParticleSystem::rand(&mut thread_rng(), NUM_KINDS))
     .add_startup_system(setup_world)
-    .add_system_set(
-        SystemSet::new()
-            .with_run_criteria(FixedTimestep::step(TICK_TIME as f64))
-            .with_system(update_velocities)
-            .with_system(update_physics.after(update_velocities)),
-    );
+    .add_system(update_forces);
 
     #[cfg(feature = "editor")]
     app.add_plugin(EditorPlugin)
@@ -94,23 +100,31 @@ fn setup_world(
                 mesh: sphere_mesh.clone(),
                 material: color_materials[kind_i].clone(),
                 transform: Transform::from_translation(Vec3::new(
-                    20.0 * (rng.gen::<f32>() - 0.5),
-                    20.0 * (rng.gen::<f32>() - 0.5),
-                    20.0 * (rng.gen::<f32>() - 0.5),
+                    1.0 * (rng.gen::<f32>() - 0.5),
+                    1.0 * (rng.gen::<f32>() - 0.5),
+                    1.0 * (rng.gen::<f32>() - 0.5),
                 )),
                 ..default()
             })
             .insert(kind)
-            .insert(Velocity(Vec3::ZERO));
+            .insert(RigidBody::Dynamic)
+            .insert(Collider::ball(PARTICLE_SIZE))
+            .insert(Restitution::coefficient(0.0))
+            .insert(ExternalForce::default());
     }
 }
 
-fn update_velocities(
+fn update_forces(
     particle_system: Res<ParticleSystem>,
-    mut particles_with_velocity: Query<(Entity, &ParticleKindHandle, &Transform, &mut Velocity)>,
+    mut particles_with_velocity: Query<(
+        Entity,
+        &ParticleKindHandle,
+        &Transform,
+        &mut ExternalForce,
+    )>,
     particles: Query<(Entity, &ParticleKindHandle, &Transform)>,
 ) {
-    for (e1, k1, t1, mut v1) in particles_with_velocity.iter_mut() {
+    for (e1, k1, t1, mut f) in particles_with_velocity.iter_mut() {
         let mut force = Vec3::ZERO;
         for (e2, k2, t2) in particles.iter() {
             if e1 == e2 {
@@ -120,18 +134,9 @@ fn update_velocities(
             force += particle_system.rule(*k1, *k2) * d.normalize_or_zero()
                 / (d.length_squared() + f32::EPSILON);
         }
-        *v1 = Velocity(v1.0 + TICK_TIME * force);
+        *f = ExternalForce { force, ..default() }
     }
 }
-
-fn update_physics(mut particles: Query<(&Velocity, &mut Transform)>) {
-    for (v, mut t) in particles.iter_mut() {
-        t.translation += v.0;
-    }
-}
-
-#[derive(Component)]
-struct Velocity(Vec3);
 
 #[derive(Clone, Copy, Component)]
 struct ParticleKindHandle(usize);
@@ -147,7 +152,7 @@ impl ParticleSystem {
         Self {
             num_kinds,
             rules: (0..(num_kinds * num_kinds))
-                .map(|_| 2.0 * (rng.gen::<f32>() - 0.5))
+                .map(|_| 2.0 * PARTICLE_FORCE_MAX * (rng.gen::<f32>() - 0.5))
                 .collect(),
         }
     }
