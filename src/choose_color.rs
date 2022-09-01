@@ -74,15 +74,11 @@ fn tick_points(points: &mut [Vec3]) {
         max = d.max(max);
     }
 
-    let forces: Vec<_> = closest
-        .into_iter()
-        .map(|(direction, magnitude)| {
-            direction * (1.0 - (magnitude - min) / (max - min + f32::EPSILON))
-        })
-        .collect();
-
     let bounds = bounds();
-    for (p, mut force) in points.iter_mut().zip(forces.into_iter()) {
+    let forces_iter = closest.into_iter().map(|(direction, magnitude)| {
+        direction * (1.0 - (magnitude - min) / (max - min + f32::EPSILON))
+    });
+    for (p, mut force) in points.iter_mut().zip(forces_iter) {
         for bound in &bounds.0 {
             let v = bound.distance(*p);
             force += bound.0 * (1.0 - 1.0 / (1.0 + std::f32::consts::E.powf(-2048.0 * v + 5.0)));

@@ -80,7 +80,7 @@ fn setup_world(
         .into_iter()
         .map(|color| {
             materials.add(StandardMaterial {
-                emissive: color.clone(),
+                emissive: color,
                 ..default()
             })
         })
@@ -165,7 +165,7 @@ impl ParticleSystem {
     }
 
     pub fn kinds(&self) -> impl Iterator<Item = ParticleKindHandle> {
-        (0..self.num_kinds).map(|pk| ParticleKindHandle(pk))
+        (0..self.num_kinds).map(ParticleKindHandle)
     }
 
     pub fn rule(&self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> &ParticleRule {
