@@ -1,12 +1,8 @@
 mod choose_color;
 
-use std::f32::consts::PI;
-
 use bevy::{
     prelude::{shape::UVSphere, *},
-    time::FixedTimestep,
-    utils::HashMap,
-    window::{PresentMode, WindowMode},
+    window::WindowMode,
 };
 use bevy_flycam::PlayerPlugin;
 use bevy_rapier3d::prelude::*;
@@ -20,9 +16,9 @@ use ::{
 };
 
 const NUM_KINDS: usize = 4;
-const NUM_PARTICLES: usize = 3000;
+const NUM_PARTICLES: usize = 2000;
 const PARTICLE_SIZE: f32 = 0.01;
-const PARTICLE_FORCE_MAX: f32 = 0.001;
+const PARTICLE_FORCE_MAX: f32 = 0.00001;
 
 fn main() {
     let mut app = App::new();
@@ -130,9 +126,11 @@ fn update_forces(
             if e1 == e2 {
                 continue;
             }
-            let d = (t2.translation - t1.translation);
-            force += particle_system.rule(*k1, *k2) * d.normalize_or_zero()
-                / (d.length_squared() + f32::EPSILON);
+            let rule = particle_system.rule(*k1, *k2);
+            let d = t2.translation - t1.translation;
+            force += rule.force
+                * d.normalize_or_zero()
+                * ((d.length() + f32::EPSILON).powi(rule.distance_exp));
         }
         *f = ExternalForce { force, ..default() }
     }
@@ -144,7 +142,13 @@ struct ParticleKindHandle(usize);
 #[derive(Debug)]
 struct ParticleSystem {
     num_kinds: usize,
-    rules: Vec<f32>,
+    rules: Vec<ParticleRule>,
+}
+
+#[derive(Debug)]
+struct ParticleRule {
+    force: f32,
+    distance_exp: i32,
 }
 
 impl ParticleSystem {
@@ -152,7 +156,10 @@ impl ParticleSystem {
         Self {
             num_kinds,
             rules: (0..(num_kinds * num_kinds))
-                .map(|_| 2.0 * PARTICLE_FORCE_MAX * (rng.gen::<f32>() - 0.5))
+                .map(|_| ParticleRule {
+                    force: 2.0 * PARTICLE_FORCE_MAX * (rng.gen::<f32>() - 0.5),
+                    distance_exp: rng.gen_range(-2..=1),
+                })
                 .collect(),
         }
     }
@@ -161,13 +168,8 @@ impl ParticleSystem {
         (0..self.num_kinds).map(|pk| ParticleKindHandle(pk))
     }
 
-    pub fn rule(&self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> f32 {
-        self.rules[self.index(pk1, pk2)]
-    }
-
-    pub fn rule_mut(&mut self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> &mut f32 {
-        let index = self.index(pk1, pk2);
-        &mut self.rules[index]
+    pub fn rule(&self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> &ParticleRule {
+        &self.rules[self.index(pk1, pk2)]
     }
 
     fn index(&self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> usize {

@@ -1,11 +1,4 @@
-use std::os::windows::thread;
-
-use bevy::{
-    math::{vec3, Vec3Swizzles},
-    prelude::{shape::UVSphere, *},
-    render::render_resource::Face,
-    time::FixedTimestep,
-};
+use bevy::{math::vec3, prelude::*};
 use rand::prelude::*;
 
 pub fn choose_colors(n: usize) -> Vec<Color> {
@@ -34,7 +27,7 @@ fn get_initial_points(n: usize) -> Vec<Vec3> {
     let mut points = Vec::with_capacity(n);
     let mut rng = thread_rng();
 
-    for i in 0..n {
+    for _ in 0..n {
         points.push(vec3(rng.gen(), rng.gen(), rng.gen()));
     }
 
@@ -48,7 +41,7 @@ fn tick_points(points: &mut [Vec3]) {
         .map(|(i, p1)| {
             let mut min = (Vec3::X, f32::INFINITY);
             for (j, p2) in points.iter().enumerate() {
-                if (i == j) {
+                if i == j {
                     continue;
                 }
                 let d = *p1 - *p2;
@@ -76,15 +69,10 @@ fn tick_points(points: &mut [Vec3]) {
 
     let mut min = f32::INFINITY;
     let mut max = 0.0;
-    let mean = closest
-        .iter()
-        .map(|(_, d)| {
-            min = d.min(min);
-            max = d.max(max);
-            d
-        })
-        .sum::<f32>()
-        / closest.len() as f32;
+    for (_, d) in closest.iter() {
+        min = d.min(min);
+        max = d.max(max);
+    }
 
     let forces: Vec<_> = closest
         .into_iter()
@@ -110,7 +98,7 @@ fn mean_minimum_distance(points: &[Vec3]) -> f32 {
         .map(|(i, p1)| {
             let mut min = f32::INFINITY;
             for (j, p2) in points.iter().enumerate() {
-                if (i == j) {
+                if i == j {
                     continue;
                 }
                 let d = (*p1 - *p2).length();
@@ -128,19 +116,9 @@ impl Bound {
     fn distance(&self, v: Vec3) -> f32 {
         v.dot(self.0) - self.1
     }
-
-    fn is_in_bound(&self, v: Vec3) -> bool {
-        self.distance(v) > 0.0
-    }
 }
 
 struct Bounds(Vec<Bound>);
-
-impl Bounds {
-    fn is_in_bounds(&self, v: Vec3) -> bool {
-        self.0.iter().all(|b| b.is_in_bound(v))
-    }
-}
 
 fn bounds() -> Bounds {
     Bounds(vec![
