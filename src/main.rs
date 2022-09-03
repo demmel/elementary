@@ -20,9 +20,9 @@ use ::{
 };
 
 const NUM_KINDS: usize = 4;
-const NUM_PARTICLES: usize = 2000;
+const NUM_PARTICLES: usize = 5000;
 const PARTICLE_SIZE: f32 = 0.01;
-const PARTICLE_FORCE_MAX: f32 = 1e-5;
+const PARTICLE_FORCE_MAX: f32 = 1e-3;
 const BH_THETA: f32 = 1.0;
 
 fn main() {
@@ -39,8 +39,8 @@ fn main() {
     .insert_resource(RapierConfiguration {
         gravity: Vect::ZERO,
         timestep_mode: TimestepMode::Variable {
-            max_dt: 1.0 / 240.0,
-            time_scale: 0.01,
+            max_dt: 1.0 / 60.0,
+            time_scale: 1.0,
             substeps: 1,
         },
         ..default()

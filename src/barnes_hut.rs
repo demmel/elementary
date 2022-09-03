@@ -33,8 +33,16 @@ impl<TId: Id> BarnesHutTree<TId> {
         distance_exp: i32,
         theta: f32,
     ) -> Vec3 {
-        self.root
-            .force(id, position, force_constant, distance_exp, theta)
+        let mut force = Vec3::ZERO;
+        self.root.force(
+            &mut force,
+            id,
+            position,
+            force_constant,
+            distance_exp,
+            theta,
+        );
+        force
     }
 }
 
@@ -108,43 +116,40 @@ impl<TId: Id> Node<TId> {
 
     fn force(
         &self,
+        force: &mut Vec3,
         id: TId,
         position: Vec3,
         force_constant: f32,
         distance_exp: i32,
         theta: f32,
-    ) -> Vec3 {
+    ) {
         match &self.kind {
-            NodeKind::Empty => Vec3::ZERO,
+            NodeKind::Empty => {}
             NodeKind::Leaf(node_id) => {
                 if id != *node_id {
-                    force(
+                    *force += _force(
                         position,
                         self.center_of_mass,
                         self.mass,
                         force_constant,
                         distance_exp,
                     )
-                } else {
-                    Vec3::ZERO
                 }
             }
             NodeKind::Node(nodes) => {
                 let d = (self.center_of_mass - position).length();
                 if self.size / d < theta {
-                    force(
+                    *force += _force(
                         position,
                         self.center_of_mass,
                         self.mass,
                         force_constant,
                         distance_exp,
-                    )
+                    );
                 } else {
-                    let mut force = Vec3::ZERO;
                     for node in nodes.iter() {
-                        force += node.force(id, position, force_constant, distance_exp, theta);
+                        node.force(force, id, position, force_constant, distance_exp, theta);
                     }
-                    force
                 }
             }
         }
@@ -164,7 +169,7 @@ fn branch_index(position: Vec3, midpoint: Vec3) -> usize {
     onoff.x as usize + onoff.y as usize * 2 + onoff.z as usize * 4
 }
 
-fn force(
+fn _force(
     position: Vec3,
     body_position: Vec3,
     body_mass: f32,
