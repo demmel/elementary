@@ -1,5 +1,9 @@
+mod barnes_hut;
 mod choose_color;
 
+use std::vec;
+
+use barnes_hut::BarnesHutTree;
 use bevy::{
     prelude::{shape::UVSphere, *},
     window::WindowMode,
@@ -18,14 +22,15 @@ use ::{
 const NUM_KINDS: usize = 4;
 const NUM_PARTICLES: usize = 2000;
 const PARTICLE_SIZE: f32 = 0.01;
-const PARTICLE_FORCE_MAX: f32 = 0.00001;
+const PARTICLE_FORCE_MAX: f32 = 1e-5;
+const BH_THETA: f32 = 1.0;
 
 fn main() {
     let mut app = App::new();
 
     app.insert_resource(WindowDescriptor {
         title: "Elementary".to_string(),
-        mode: WindowMode::BorderlessFullscreen,
+        mode: WindowMode::Windowed,
         ..default()
     })
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
@@ -42,8 +47,10 @@ fn main() {
     })
     .add_plugin(PlayerPlugin)
     .insert_resource(ParticleSystem::rand(&mut thread_rng(), NUM_KINDS))
+    .init_resource::<ParticleTrees>()
     .add_startup_system(setup_world)
-    .add_system(update_forces);
+    .add_system(barnes_hut)
+    .add_system(update_forces.after(barnes_hut));
 
     #[cfg(feature = "editor")]
     app.add_plugin(EditorPlugin)
@@ -60,7 +67,7 @@ fn setup_world(
     mut ambient_light: ResMut<AmbientLight>,
     particle_system: Res<ParticleSystem>,
 ) {
-    println!("{particle_system:?}");
+    println!("{:?}", particle_system);
 
     *ambient_light = AmbientLight {
         color: Color::WHITE,
@@ -106,33 +113,89 @@ fn setup_world(
             .insert(RigidBody::Dynamic)
             .insert(Collider::ball(PARTICLE_SIZE))
             .insert(Restitution::coefficient(0.0))
-            .insert(ExternalForce::default());
+            .insert(ExternalForce::default())
+            .insert(ReadMassProperties::default());
+    }
+}
+
+fn barnes_hut(
+    particle_system: Res<ParticleSystem>,
+    mut particle_trees: ResMut<ParticleTrees>,
+    particles: Query<(Entity, &ParticleKindHandle, &Transform, &ReadMassProperties)>,
+) {
+    let bounds = particles.iter().fold(
+        vec![
+            (f32::INFINITY * Vec3::ONE, -f32::INFINITY * Vec3::ONE);
+            particle_system.kinds().count()
+        ],
+        |mut bounds, (_, pk, t, _)| {
+            let (min, max) = &mut bounds[pk.0];
+
+            *min = min.min(t.translation);
+            *max = max.max(t.translation);
+
+            bounds
+        },
+    );
+
+    *particle_trees = ParticleTrees(
+        bounds
+            .into_iter()
+            .map(|(min, max)| BarnesHutTree::new(min, max))
+            .collect(),
+    );
+
+    for (e, pk, t, m) in particles.iter() {
+        particle_trees
+            .tree_mut(*pk)
+            .insert(e, t.translation, m.0.mass)
     }
 }
 
 fn update_forces(
     particle_system: Res<ParticleSystem>,
+    particle_trees: Res<ParticleTrees>,
     mut particles_with_velocity: Query<(
         Entity,
         &ParticleKindHandle,
         &Transform,
         &mut ExternalForce,
     )>,
-    particles: Query<(Entity, &ParticleKindHandle, &Transform)>,
 ) {
-    for (e1, k1, t1, mut f) in particles_with_velocity.iter_mut() {
+    for (e1, pk1, t1, mut f) in particles_with_velocity.iter_mut() {
         let mut force = Vec3::ZERO;
-        for (e2, k2, t2) in particles.iter() {
-            if e1 == e2 {
-                continue;
+
+        for pk in particle_system.kinds() {
+            let rule = particle_system.rule(*pk1, pk);
+            let point_masses = particle_trees
+                .tree(pk)
+                .point_masses(e1, t1.translation, BH_THETA);
+            for (p, m) in point_masses {
+                if m == 0.0 {
+                    continue;
+                }
+                let d = p - t1.translation;
+                force += rule.force
+                    * m
+                    * d.normalize_or_zero()
+                    * ((d.length() + f32::EPSILON).powi(rule.distance_exp));
             }
-            let rule = particle_system.rule(*k1, *k2);
-            let d = t2.translation - t1.translation;
-            force += rule.force
-                * d.normalize_or_zero()
-                * ((d.length() + f32::EPSILON).powi(rule.distance_exp));
         }
+
         *f = ExternalForce { force, ..default() }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ParticleTrees(Vec<BarnesHutTree<Entity>>);
+
+impl ParticleTrees {
+    fn tree(&self, pk: ParticleKindHandle) -> &BarnesHutTree<Entity> {
+        &self.0[pk.0]
+    }
+
+    fn tree_mut(&mut self, pk: ParticleKindHandle) -> &mut BarnesHutTree<Entity> {
+        &mut self.0[pk.0]
     }
 }
 
