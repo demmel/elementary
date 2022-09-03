@@ -25,11 +25,16 @@ impl<TId: Id> BarnesHutTree<TId> {
         self.count += 1;
     }
 
-    pub fn point_masses(&self, id: TId, position: Vec3, theta: f32) -> Vec<(Vec3, f32)> {
-        let mut point_masses = Vec::with_capacity(self.count);
+    pub fn force(
+        &self,
+        id: TId,
+        position: Vec3,
+        force_constant: f32,
+        distance_exp: i32,
+        theta: f32,
+    ) -> Vec3 {
         self.root
-            .point_masses(&mut point_masses, id, position, theta);
-        point_masses
+            .force(id, position, force_constant, distance_exp, theta)
     }
 }
 
@@ -101,22 +106,45 @@ impl<TId: Id> Node<TId> {
         self.mass += mass;
     }
 
-    fn point_masses(&self, results: &mut Vec<(Vec3, f32)>, id: TId, position: Vec3, theta: f32) {
+    fn force(
+        &self,
+        id: TId,
+        position: Vec3,
+        force_constant: f32,
+        distance_exp: i32,
+        theta: f32,
+    ) -> Vec3 {
         match &self.kind {
-            NodeKind::Empty => {}
+            NodeKind::Empty => Vec3::ZERO,
             NodeKind::Leaf(node_id) => {
                 if id != *node_id {
-                    results.push((self.center_of_mass, self.mass));
+                    force(
+                        position,
+                        self.center_of_mass,
+                        self.mass,
+                        force_constant,
+                        distance_exp,
+                    )
+                } else {
+                    Vec3::ZERO
                 }
             }
             NodeKind::Node(nodes) => {
                 let d = (self.center_of_mass - position).length();
                 if self.size / d < theta {
-                    results.push((self.center_of_mass, self.mass));
+                    force(
+                        position,
+                        self.center_of_mass,
+                        self.mass,
+                        force_constant,
+                        distance_exp,
+                    )
                 } else {
+                    let mut force = Vec3::ZERO;
                     for node in nodes.iter() {
-                        node.point_masses(results, id, position, theta);
+                        force += node.force(id, position, force_constant, distance_exp, theta);
                     }
+                    force
                 }
             }
         }
@@ -134,4 +162,21 @@ fn branch_index(position: Vec3, midpoint: Vec3) -> usize {
     let offset = position - midpoint;
     let onoff = (offset.signum() + 1.0) / 2.0;
     onoff.x as usize + onoff.y as usize * 2 + onoff.z as usize * 4
+}
+
+fn force(
+    position: Vec3,
+    body_position: Vec3,
+    body_mass: f32,
+    force_constant: f32,
+    distance_exp: i32,
+) -> Vec3 {
+    if body_mass <= 0.0 {
+        return Vec3::ZERO;
+    }
+    let d = body_position - position;
+    force_constant
+        * body_mass
+        * d.normalize_or_zero()
+        * ((d.length() + f32::EPSILON).powi(distance_exp))
 }

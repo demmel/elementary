@@ -67,8 +67,6 @@ fn setup_world(
     mut ambient_light: ResMut<AmbientLight>,
     particle_system: Res<ParticleSystem>,
 ) {
-    println!("{:?}", particle_system);
-
     *ambient_light = AmbientLight {
         color: Color::WHITE,
         brightness: 0.0,
@@ -103,9 +101,9 @@ fn setup_world(
                 mesh: sphere_mesh.clone(),
                 material: color_materials[kind_i].clone(),
                 transform: Transform::from_translation(Vec3::new(
-                    1.0 * (rng.gen::<f32>() - 0.5),
-                    1.0 * (rng.gen::<f32>() - 0.5),
-                    1.0 * (rng.gen::<f32>() - 0.5),
+                    rng.gen_range(-1.0..=1.0),
+                    rng.gen_range(-1.0..=1.0),
+                    rng.gen_range(-1.0..=1.0),
                 )),
                 ..default()
             })
@@ -155,31 +153,21 @@ fn barnes_hut(
 fn update_forces(
     particle_system: Res<ParticleSystem>,
     particle_trees: Res<ParticleTrees>,
-    mut particles_with_velocity: Query<(
-        Entity,
-        &ParticleKindHandle,
-        &Transform,
-        &mut ExternalForce,
-    )>,
+    mut particles: Query<(Entity, &ParticleKindHandle, &Transform, &mut ExternalForce)>,
 ) {
-    for (e1, pk1, t1, mut f) in particles_with_velocity.iter_mut() {
+    for (e1, pk1, t1, mut f) in particles.iter_mut() {
         let mut force = Vec3::ZERO;
 
         for pk in particle_system.kinds() {
+            let _span = info_span!("barnes_hut_force", name = "barnes_hut_force").entered();
             let rule = particle_system.rule(*pk1, pk);
-            let point_masses = particle_trees
-                .tree(pk)
-                .point_masses(e1, t1.translation, BH_THETA);
-            for (p, m) in point_masses {
-                if m == 0.0 {
-                    continue;
-                }
-                let d = p - t1.translation;
-                force += rule.force
-                    * m
-                    * d.normalize_or_zero()
-                    * ((d.length() + f32::EPSILON).powi(rule.distance_exp));
-            }
+            force += particle_trees.tree(pk).force(
+                e1,
+                t1.translation,
+                rule.force,
+                rule.distance_exp,
+                BH_THETA,
+            );
         }
 
         *f = ExternalForce { force, ..default() }
