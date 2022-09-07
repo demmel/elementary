@@ -19,10 +19,8 @@ use ::{
     bevy_editor_pls::prelude::*,
 };
 
-const NUM_KINDS: usize = 4;
+const NUM_KINDS: usize = 3;
 const NUM_PARTICLES: usize = 5000;
-const PARTICLE_SIZE: f32 = 0.01;
-const PARTICLE_FORCE_MAX: f32 = 1e-3;
 const BH_THETA: f32 = 1.0;
 
 fn main() {
@@ -30,7 +28,7 @@ fn main() {
 
     app.insert_resource(WindowDescriptor {
         title: "Elementary".to_string(),
-        mode: WindowMode::Windowed,
+        mode: WindowMode::BorderlessFullscreen,
         ..default()
     })
     .insert_resource(ClearColor(Color::rgb(0.0, 0.0, 0.0)))
@@ -72,14 +70,6 @@ fn setup_world(
         brightness: 0.0,
     };
 
-    let sphere_mesh = meshes.add(
-        UVSphere {
-            radius: PARTICLE_SIZE,
-            ..default()
-        }
-        .into(),
-    );
-
     let kinds: Vec<_> = particle_system.kinds().collect();
     let color_materials: Vec<_> = choose_colors(kinds.len())
         .into_iter()
@@ -95,21 +85,30 @@ fn setup_world(
     for _ in 0..NUM_PARTICLES {
         let kind_i = rng.gen_range(0..kinds.len());
         let kind = kinds[kind_i];
+        let mass = particle_system.kind(kind);
+
+        let sphere_mesh = meshes.add(
+            UVSphere {
+                radius: mass,
+                ..default()
+            }
+            .into(),
+        );
 
         commands
             .spawn_bundle(PbrBundle {
                 mesh: sphere_mesh.clone(),
                 material: color_materials[kind_i].clone(),
                 transform: Transform::from_translation(Vec3::new(
-                    rng.gen_range(-1.0..=1.0),
-                    rng.gen_range(-1.0..=1.0),
-                    rng.gen_range(-1.0..=1.0),
+                    rng.gen_range(-5.0..=5.0),
+                    rng.gen_range(-5.0..=5.0),
+                    rng.gen_range(-5.0..=5.0),
                 )),
                 ..default()
             })
             .insert(kind)
             .insert(RigidBody::Dynamic)
-            .insert(Collider::ball(PARTICLE_SIZE))
+            .insert(Collider::ball(mass))
             .insert(Restitution::coefficient(0.0))
             .insert(ExternalForce::default())
             .insert(ReadMassProperties::default());
@@ -193,6 +192,7 @@ struct ParticleKindHandle(usize);
 #[derive(Debug)]
 struct ParticleSystem {
     num_kinds: usize,
+    kinds: Vec<f32>,
     rules: Vec<ParticleRule>,
 }
 
@@ -206,10 +206,20 @@ impl ParticleSystem {
     pub fn rand<R: Rng>(rng: &mut R, num_kinds: usize) -> Self {
         Self {
             num_kinds,
+            kinds: (0..num_kinds).map(|_| rng.gen_range(1e-7..=1e-2)).collect(),
             rules: (0..(num_kinds * num_kinds))
-                .map(|_| ParticleRule {
-                    force: 2.0 * PARTICLE_FORCE_MAX * (rng.gen::<f32>() - 0.5),
-                    distance_exp: rng.gen_range(-2..=1),
+                .map(|_| {
+                    let distance_exp = rng.gen_range(-3..=1);
+                    let force = match distance_exp {
+                        -3 | -2 | -1 => rng.gen_range(-1e-1..=1e1),
+                        0 => rng.gen_range(-1e-3..1e-3),
+                        1 => rng.gen_range(-1e-5..1e-5),
+                        _ => unreachable!(),
+                    };
+                    ParticleRule {
+                        force,
+                        distance_exp,
+                    }
                 })
                 .collect(),
         }
@@ -217,6 +227,10 @@ impl ParticleSystem {
 
     pub fn kinds(&self) -> impl Iterator<Item = ParticleKindHandle> {
         (0..self.num_kinds).map(ParticleKindHandle)
+    }
+
+    pub fn kind(&self, pk: ParticleKindHandle) -> f32 {
+        self.kinds[pk.0]
     }
 
     pub fn rule(&self, pk1: ParticleKindHandle, pk2: ParticleKindHandle) -> &ParticleRule {
